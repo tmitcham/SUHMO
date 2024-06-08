@@ -30,9 +30,11 @@ base_dir = .
 
 SRC_DIR = ../../src  
 
+BISICLES_SRC_DIR = ../../util/bisiclesSrc
+
 UTIL_DIR = ../../util 
 
-src_dirs = $(SRC_DIR) $(UTIL_DIR)  
+src_dirs = $(SRC_DIR) $(UTIL_DIR)  $(BISICLES_SRC_DIR)
 
 # shared code for building example programs
 include $(CHOMBO_HOME)/mk/Make.example
