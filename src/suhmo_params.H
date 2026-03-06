@@ -69,6 +69,15 @@ public:
     Real m_floor_max; 
     // verbosity level
     int m_verbosity;
+
+    // BISICLES coupling
+    bool m_coupled_to_bisicles;        
+    std::string m_bisicles_input_file; // name of input file for data from BISICLES
+    std::string m_output_N_file;       // name of output file for effective pressure
+    std::string m_ice_thickness_name;  // variable name in the file (default "thickness")
+    std::string m_bed_elevation_name;  // variable name in the file (default "Z_base")
+    std::string m_velocity_x_name;     // variable name (default "xVel")
+    std::string m_velocity_y_name;     // variable name (default "yVel")
 };
 
 #include "NamespaceFooter.H"

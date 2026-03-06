@@ -41,18 +41,28 @@ void suhmo_params::setDefaults()
     m_relax =   0.1;
     m_floor_min = 0.0;
     m_floor_max = 1.0;
+
+    m_coupled_to_bisicles = false;
+    m_bisicles_input_file = "";
+    m_output_N_file = "";
+    m_ice_thickness_name = "thickness";
+    m_bed_elevation_name = "Z_base";
+    m_velocity_x_name = "xVel";
+    m_velocity_y_name = "yVel";
 }
 
 void suhmo_params::readInputs()
 {
     pout() << "suhmo_params::readInputs()" << endl;
 
-    // Cst of problem
-    m_rho_i = 910.0;
-    m_rho_w = 1000.0;
-    m_gravity = 9.8;
     // Problem dependent variables
     ParmParse ppParams("suhmo");
+
+    // Cst of problem
+    ppParams.get("rho_i", m_rho_i);
+    ppParams.get("rho_w", m_rho_w);
+    ppParams.get("g", m_gravity);
+    
     ppParams.get("GeoFlux", m_G);
     ppParams.get("LatHeat", m_L);
     ppParams.get("IceHeight", m_H);
@@ -103,6 +113,17 @@ void suhmo_params::readInputs()
     // need to include verbose
     ParmParse ppAmr("AmrHydro");
     ppAmr.query("verbosity", m_verbosity);
+
+    // BISICLES coupling
+    ppParams.query("coupled_to_bisicles", m_coupled_to_bisicles);
+    if (m_coupled_to_bisicles) {
+        ppParams.get("bisicles_input_file", m_bisicles_input_file);
+        ppParams.get("output_N_file", m_output_N_file);
+        ppParams.query("ice_thickness_name", m_ice_thickness_name);
+        ppParams.query("bed_elevation_name", m_bed_elevation_name);
+        ppParams.query("velocity_x_name", m_velocity_x_name);
+        ppParams.query("velocity_y_name", m_velocity_y_name);
+    }
 
 }
 

@@ -240,6 +240,12 @@ public:
     /* set up for restart */
     void restart(string& a_restart_file);
 
+    // BISICLES coupling
+    void readBisiclesData(string& a_bisicles_input_file);
+
+    // Write out effective pressure for use in BISICLES
+    void writeEffectivePressure(const std::string& a_filename);
+
 #endif
 
     /* set current solution time */

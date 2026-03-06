@@ -50,6 +50,7 @@ using std::string;
 #include "CONSTANTS.H"
 #include "Gradient.H"
 #include "ExtrapGhostCells.H"
+#include "ReadLevelData.H"
 
 #include "AMRFASMultiGrid.H"
 #include "VCAMRNonLinearPoissonOp.H"
@@ -1278,6 +1279,13 @@ AmrHydro::setIBC(HydroIBC* a_IBC)
     m_IBCPtr = a_IBC->new_hydroIBC();
 }
 
+// BISICLES coupling
+// if m_bisicles_coupling is true, then we read in the 
+// BISICLES data and set up the initial conditions 
+// for the hydro model based on that data.
+
+readBisiclesData();
+
 /* Main advance function */
 void
 AmrHydro::run(Real a_max_time, int a_max_step)
@@ -1349,6 +1357,13 @@ AmrHydro::run(Real a_max_time, int a_max_step)
 #ifdef CH_USE_HDF5
         writePlotFile();
 #endif
+    }
+
+    // write out effectivePressure file if coupled to BISICLES
+    if (m_suhmoParm->m_coupled_to_bisicles) {
+        if (m_suhmoParm->m_output_N_file != "") {
+            writeEffectivePressure(m_suhmoParm->m_output_N_file);
+        }
     }
 
     // dump out final checkpoint file, if appropriate
@@ -2217,7 +2232,7 @@ AmrHydro::Calc_meltingRate(int                   lev,
             Real ub_norm = MV(iv,0);
             Real sca_prod = 0.0; 
             if (m_suhmoParm->m_basal_friction) {
-                sca_prod = 20. * 20. * m_suhmoParm->m_ub[0] * std::abs(Pressi(iv,0) - Pressw(iv,0)) * m_suhmoParm->m_ub[0];
+                sca_prod = 20. * 20. * ub_norm * std::abs(Pressi(iv,0) - Pressw(iv,0)) * ub_norm;
             }
 
             // Pw = rho_w g (h - zb) -- Q*grad(Pw) = rho_w g (Q*grad(h) - Q*grad(zb))  
@@ -6239,6 +6254,320 @@ AmrHydro::restart(string& a_restart_file)
         m_IBCPtr->resetCovered(*m_suhmoParm, *m_head[lev], *m_overburdenpress[lev]);
         m_IBCPtr->setup_iceMask_EC(*m_iceMask[lev], *m_iceMask_ec[lev]); // Hoping GC properly set via copy in readCheckpointFile
     }
+}
+
+void
+AmrHydro::readBisiclesData()
+{
+
+    if (!m_suhmoParm->m_coupled_to_bisicles) return;
+
+    const std::string& file = m_suhmoParm->m_bisicles_input_file;
+    if (file.empty()) return;
+
+    if (m_verbosity > 1) {
+        pout() << "AmrHydro::readBisiclesData - reading from " << file << endl;
+    }
+
+    Vector<LevelData<FArrayBox>*> fileData;   // raw data from file
+    Vector<DisjointBoxLayout>     fileGrids;  // grid layout from file
+    Vector<std::string>           fileNames;  // variable names from file
+    Vector<int>                   fileRatios; // refinement ratios from file
+    Real fileDx = 0.0, fileDt = 0.0, fileTime = 0.0;
+    Box  fileDomBox;
+    int  fileNumLevels;
+
+    int status = ReadAMRHierarchyHDF5(
+        file, fileGrids, fileData, fileNames,
+        fileDomBox, fileDx, fileDt, fileTime,
+        fileRatios, fileNumLevels);
+
+    if (status != 0) {
+        MayDay::Error("AmrHydro::readBisiclesData - failed to read BISICLES file");
+    }
+
+    if (m_verbosity > 3) {
+        pout() << "  File has " << fileNumLevels << " level(s), dx=" << fileDx
+               << ", " << fileNames.size() << " variables" << endl;
+        for (int i = 0; i < fileNames.size(); i++) {
+            pout() << "    var " << i << ": " << fileNames[i] << endl;
+        }
+    }
+
+    int thkIdx = -1, velXIdx = -1, velYIdx = -1;
+
+    for (int i = 0; i < fileNames.size(); i++) {
+        if (fileNames[i] == m_suhmoParm->m_ice_thickness_name)  thkIdx  = i;
+        if (fileNames[i] == m_suhmoParm->m_velocity_x_name)     velXIdx = i;
+        if (fileNames[i] == m_suhmoParm->m_velocity_y_name)     velYIdx = i;
+    }
+
+    if (thkIdx < 0) {
+        pout() << "WARNING: ice thickness variable '"
+               << m_suhmoParm->m_ice_thickness_name
+               << "' not found in file. Skipping geometry load." << endl;
+        // Clean up and return
+        for (int i = 0; i < fileData.size(); i++) {
+            if (fileData[i] != NULL) { delete fileData[i]; fileData[i] = NULL; }
+        }
+        return;
+    }
+
+    elif (velXIdx < 0 || velYIdx < 0) {
+        pout() << "WARNING: velocity variable(s) '"
+               << m_suhmoParm->m_velocity_x_name << "' or '"
+               << m_suhmoParm->m_velocity_y_name
+               << "' not found in file. Skipping velocity load." << endl;
+        // Clean up and return
+        for (int i = 0; i < fileData.size(); i++) {
+            if (fileData[i] != NULL) { delete fileData[i]; fileData[i] = NULL; }
+        }
+        return;
+    }
+
+    if (m_verbosity > 3) {
+        pout() << "  thk comp=" << thkIdx;
+        if (velXIdx >= 0) pout() << ", velX comp=" << velXIdx;
+        if (velYIdx >= 0) pout() << ", velY comp=" << velYIdx;
+        pout() << endl;
+    }
+
+    // For each SUHMO level, extract the data from the file's
+    // level 0 (or the finest file level that covers it) and
+    // copy/interpolate it onto SUHMO's own grids.
+
+    for (int lev = 0; lev <= m_finest_level; lev++) {
+
+        const DisjointBoxLayout& suhmoGrids = m_amrGrids[lev];
+        const ProblemDomain&     suhmoDomain = m_amrDomains[lev];
+        Real suhmoDx = m_amrDx[lev][0];
+
+        // Determine which file level to read from.
+        // Find the file level whose dx is closest to (but not finer than) 
+        // SUHMO's dx on this level.
+        int fileLev = 0;
+        Real fileLevDx = fileDx;
+        for (int fl = 1; fl < fileNumLevels; fl++) {
+            Real flDx = fileDx;
+            for (int r = 0; r < fl; r++) flDx /= Real(fileRatios[r]);
+            if (flDx >= suhmoDx - 1.0e-6) {
+                fileLev = fl;
+                fileLevDx = flDx;
+            }
+        }
+
+        if (m_verbosity > 3) {
+            pout() << "  SUHMO level " << lev << " (dx=" << suhmoDx
+                   << ") <- file level " << fileLev << " (dx=" << fileLevDx << ")" << endl;
+        }
+
+        // temporary LevelData on SUHMO's grids, 1 component, no ghosts
+        // to receive each variable via copyTo.
+        LevelData<FArrayBox> tmpOnSuhmo(suhmoGrids, 1, IntVect::Zero);
+
+        // Compute the ratio between file dx and SUHMO dx
+        // ratio > 1 means file is coarser, ratio < 1 means file is finer
+        int dxRatio = (int)(fileLevDx / suhmoDx + 0.5);
+        bool fileIsCoarser = (dxRatio > 1);
+        bool fileIsFiner   = (fileLevDx < suhmoDx - 1.0e-6);
+        bool sameResolution = (!fileIsCoarser && !fileIsFiner);
+
+
+    // thickness first
+        {
+            if (sameResolution) {
+                // Direct copy from file data to SUHMO's grids.
+                fileData[fileLev]->copyTo(
+                    Interval(thkIdx, thkIdx),  // source component
+                    tmpOnSuhmo,
+                    Interval(0, 0));           // dest component
+            } else if (fileIsCoarser) {
+                // interpolate from coarse file data to fine SUHMO grid.
+                // copy the file component into a single component LevelData
+                // on the file's grids, then use FineInterp.
+                LevelData<FArrayBox> fileThk(fileGrids[fileLev], 1, IntVect::Zero);
+                fileData[fileLev]->copyTo(
+                    Interval(thkIdx, thkIdx), fileThk, Interval(0, 0));
+
+                FineInterp interpolator(suhmoGrids, 1, dxRatio, suhmoDomain);
+                interpolator.interpToFine(tmpOnSuhmo, fileThk);
+            } else {
+                // File is finer — coarsen from file onto SUHMO grids.
+                int coarsenRatio = (int)(suhmoDx / fileLevDx + 0.5);
+                LevelData<FArrayBox> fileThk(fileGrids[fileLev], 1, IntVect::Zero);
+                fileData[fileLev]->copyTo(
+                    Interval(thkIdx, thkIdx), fileThk, Interval(0, 0));
+
+                CoarseAverage averager(fileGrids[fileLev], 1, coarsenRatio);
+                averager.averageToCoarse(tmpOnSuhmo, fileThk);
+            }
+
+            // Now tmpOnSuhmo contains thickness on SUHMO's grids.
+            // Copy into m_iceheight and recompute m_overburdenpress.
+            DataIterator dit = suhmoGrids.dataIterator();
+            for (dit.begin(); dit.ok(); ++dit) {
+                FArrayBox& iceH = (*m_iceheight[lev])[dit];
+                FArrayBox& pi   = (*m_overburdenpress[lev])[dit];
+                const FArrayBox& thk = tmpOnSuhmo[dit];
+
+                BoxIterator bit(suhmoGrids.get(dit()));
+                for (bit.begin(); bit.ok(); ++bit) {
+                    const IntVect& iv = bit();
+                    Real H = thk(iv, 0);
+
+                    iceH(iv, 0) = std::max(H, 0.0);
+
+                    // Recompute overburden: Pi = rho_i * g * H
+                    pi(iv, 0) = m_suhmoParm->m_rho_i
+                              * m_suhmoParm->m_gravity
+                              * std::max(H, 0.0);
+                }
+            }
+
+            // Fill ghost cells
+            m_iceheight[lev]->exchange();
+            m_overburdenpress[lev]->exchange();
+
+            if (m_verbosity > 3) {
+                pout() << "  -> Loaded ice thickness and overburden pressure" << endl;
+            }
+        }
+
+        // velocities -> m_magVel
+        if (velXIdx >= 0 && velYIdx >= 0) {
+            // We need both components. |u| = sqrt(ux^2 + uy^2).
+            LevelData<FArrayBox> tmpVelX(suhmoGrids, 1, IntVect::Zero);
+            LevelData<FArrayBox> tmpVelY(suhmoGrids, 1, IntVect::Zero);
+
+            if (sameResolution) {
+                fileData[fileLev]->copyTo(
+                    Interval(velXIdx, velXIdx), tmpVelX, Interval(0, 0));
+                fileData[fileLev]->copyTo(
+                    Interval(velYIdx, velYIdx), tmpVelY, Interval(0, 0));
+            } else if (fileIsCoarser) {
+                LevelData<FArrayBox> fVx(fileGrids[fileLev], 1, IntVect::Zero);
+                LevelData<FArrayBox> fVy(fileGrids[fileLev], 1, IntVect::Zero);
+                fileData[fileLev]->copyTo(
+                    Interval(velXIdx, velXIdx), fVx, Interval(0, 0));
+                fileData[fileLev]->copyTo(
+                    Interval(velYIdx, velYIdx), fVy, Interval(0, 0));
+                FineInterp interpolator(suhmoGrids, 1, dxRatio, suhmoDomain);
+                interpolator.interpToFine(tmpVelX, fVx);
+                interpolator.interpToFine(tmpVelY, fVy);
+            } else {
+                int coarsenRatio = (int)(suhmoDx / fileLevDx + 0.5);
+                LevelData<FArrayBox> fVx(fileGrids[fileLev], 1, IntVect::Zero);
+                LevelData<FArrayBox> fVy(fileGrids[fileLev], 1, IntVect::Zero);
+                fileData[fileLev]->copyTo(
+                    Interval(velXIdx, velXIdx), fVx, Interval(0, 0));
+                fileData[fileLev]->copyTo(
+                    Interval(velYIdx, velYIdx), fVy, Interval(0, 0));
+                CoarseAverage averager(fileGrids[fileLev], 1, coarsenRatio);
+                averager.averageToCoarse(tmpVelX, fVx);
+                averager.averageToCoarse(tmpVelY, fVy);
+            }
+
+            // Compute magnitude and store in m_magVel.
+            // BISICLES velocity is in m/yr.
+            // SUHMO velocity is in m/s.
+            // Convert: v_ms = v_myr / sec_per_yr
+
+            Real sec_per_yr = 31556926.0; // same as in BISICLES code
+
+            DataIterator dit = suhmoGrids.dataIterator();
+            for (dit.begin(); dit.ok(); ++dit) {
+                FArrayBox& magVel = (*m_magVel[lev])[dit];
+                const FArrayBox& vx = tmpVelX[dit];
+                const FArrayBox& vy = tmpVelY[dit];
+
+                BoxIterator bit(suhmoGrids.get(dit()));
+                for (bit.begin(); bit.ok(); ++bit) {
+                    const IntVect& iv = bit();
+                    Real ux = vx(iv, 0) / sec_per_yr;  // m/yr -> m/s
+                    Real uy = vy(iv, 0) / sec_per_yr;
+                    magVel(iv, 0) = std::sqrt(ux*ux + uy*uy);
+                }
+            }
+            m_magVel[lev]->exchange();
+
+            if (m_verbosity > 3) {
+                pout() << "  -> Loaded velocity magnitude" << endl;
+            }
+        } else if (velXIdx >= 0 || velYIdx >= 0) {
+            pout() << "WARNING: Only one velocity component found in file. "
+                   << "Need both " << m_suhmoParm->m_velocity_x_name
+                   << " and " << m_suhmoParm->m_velocity_y_name
+                   << ". Skipping velocity load." << endl;
+        }
+
+    } // end loop over SUHMO levels
+
+    // Clean up the file data
+    for (int i = 0; i < fileData.size(); i++) {
+        if (fileData[i] != NULL) {
+            delete fileData[i];
+            fileData[i] = NULL;
+        }
+    }
+
+    if (m_verbosity > 1) {
+        pout() << "AmrHydro::readBisiclesData - done" << endl;
+    }
+}
+
+void
+AmrHydro::writeEffectivePressure(const std::string& a_filename)
+{
+    pout() << "AmrHydro: writing effective pressure to " << a_filename << endl;
+
+    // calculate N = Pi - Pw on each level
+    Vector<LevelData<FArrayBox>*> nData(m_finest_level + 1, NULL);
+    for (int lev = 0; lev <= m_finest_level; lev++) {
+        nData[lev] = new LevelData<FArrayBox>(m_amrGrids[lev], 1, IntVect::Zero);
+
+        LevelData<FArrayBox>& pi = *m_overburdenpress[lev];
+        LevelData<FArrayBox>& pw = *m_Pw[lev];
+
+        for (DataIterator dit(m_amrGrids[lev]); dit.ok(); ++dit) {
+            FArrayBox& N = (*nData[lev])[dit];
+            N.copy(pi[dit]);
+            N -= pw[dit];
+            // Ensure N >= 0
+            for (BoxIterator bit(N.box()); bit.ok(); ++bit) {
+                const IntVect& iv = bit();
+                if (N(iv, 0) < 0.0) N(iv, 0) = 0.0;
+            }
+        }
+    }
+
+    // Write as a standard Chombo AMR hierarchy HDF5 file
+    Vector<std::string> names(1, "effectivePressure");
+    Vector<DisjointBoxLayout> grids(m_finest_level + 1);
+    Vector<int> refRatios(m_finest_level + 1, 1);
+    for (int lev = 0; lev <= m_finest_level; lev++) {
+        grids[lev] = m_amrGrids[lev];
+        if (lev < m_finest_level) refRatios[lev] = m_refinement_ratios[lev];
+    }
+
+    Real dx = m_amrDx[0][0];  // coarsest level dx
+    
+    WriteAMRHierarchyHDF5(a_filename,
+                          grids,
+                          nData,
+                          names,
+                          m_amrDomains[0].domainBox(),
+                          dx,
+                          m_dt,
+                          m_time,
+                          refRatios,
+                          m_finest_level + 1);
+
+    // Clean up
+    for (int lev = 0; lev <= m_finest_level; lev++) {
+        delete nData[lev];
+    }
+
+    pout() << "AmrHydro: effective pressure written" << endl;
 }
 
 #endif
