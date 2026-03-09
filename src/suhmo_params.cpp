@@ -1,4 +1,4 @@
-#include <suhmo_params.H>
+#include "suhmo_params.H"
 #include "ParmParse.H"
 
 #include "NamespaceHeader.H"

@@ -241,7 +241,7 @@ public:
     void restart(string& a_restart_file);
 
     // BISICLES coupling
-    void readBisiclesData(string& a_bisicles_input_file);
+    void readBisiclesData();
 
     // Write out effective pressure for use in BISICLES
     void writeEffectivePressure(const std::string& a_filename);

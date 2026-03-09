@@ -1279,12 +1279,6 @@ AmrHydro::setIBC(HydroIBC* a_IBC)
     m_IBCPtr = a_IBC->new_hydroIBC();
 }
 
-// BISICLES coupling
-// if m_bisicles_coupling is true, then we read in the 
-// BISICLES data and set up the initial conditions 
-// for the hydro model based on that data.
-
-readBisiclesData();
 
 /* Main advance function */
 void
@@ -6263,8 +6257,11 @@ AmrHydro::readBisiclesData()
     if (!m_suhmoParm->m_coupled_to_bisicles) return;
 
     const std::string& file = m_suhmoParm->m_bisicles_input_file;
-    if (file.empty()) return;
+    if (file.empty()) {
 
+        MayDay::Error("AmrHydro::readBisiclesData - SUHMO is set to be coupled to BISICLES, but no input file specified");
+    }
+    
     if (m_verbosity > 1) {
         pout() << "AmrHydro::readBisiclesData - reading from " << file << endl;
     }
