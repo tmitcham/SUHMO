@@ -50,7 +50,6 @@ using std::string;
 #include "CONSTANTS.H"
 #include "Gradient.H"
 #include "ExtrapGhostCells.H"
-#include "ReadLevelData.H"
 
 #include "AMRFASMultiGrid.H"
 #include "VCAMRNonLinearPoissonOp.H"
@@ -6310,7 +6309,7 @@ AmrHydro::readBisiclesData()
         return;
     }
 
-    elif (velXIdx < 0 || velYIdx < 0) {
+    else if (velXIdx < 0 || velYIdx < 0) {
         pout() << "WARNING: velocity variable(s) '"
                << m_suhmoParm->m_velocity_x_name << "' or '"
                << m_suhmoParm->m_velocity_y_name

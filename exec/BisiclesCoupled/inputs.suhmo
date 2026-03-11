@@ -22,7 +22,7 @@ suhmo.ct = 7.5e-8
 suhmo.cw = 4.22e3
 suhmo.turbulentParam = 0.001
 
-suhmo.SlidingVelocity = 1.0e-6 0.0
+suhmo.SlidingVelocity = 1.0e-6 0.0 # over-written later by BISICLES info
 suhmo.br = 0.1
 suhmo.lr = 2.0
 suhmo.A  = 2.5e-25
