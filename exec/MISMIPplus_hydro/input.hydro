@@ -1,0 +1,219 @@
+# ===========================================================================
+# MISMIP+ marine ice-sheet experiment – SUHMO subglacial hydrology input file
+#
+# Domain: 800 km x 80 km – must match BISICLES inputs.bisicles exactly.
+#   x = 0       : upstream ice divide  (zero-flux Neumann BC)
+#   x = 800 km  : ocean margin          (zero head Dirichlet BC)
+#   y = 0, 80 km: fjord valley walls    (zero-flux Neumann BC)
+#
+# When coupled to BISICLES, this file is used via run_coupled.py.  The
+# coupling script appends overrides at the end of each iteration:
+#   suhmo.coupled_to_bisicles = true
+#   suhmo.bisicles_input_file = bisicles_for_suhmo.2d.hdf5
+#   suhmo.output_N_file       = suhmo_for_bisicles.2d.hdf5
+#
+# Moulins:
+#   12 moulins on a regular 4 x 3 grid in the grounded zone.
+#   Columns at x = 100, 200, 300, 400 km (well upstream of the ~450 km
+#   spin-up grounding line); rows at y = 20, 40, 60 km.
+#   Each moulin represents meltwater draining from a ~100 x 20 km surface
+#   catchment; discharge 30 m3/s is representative for ~0.5 m/yr runoff.
+#   sigma = 1000 m – injection radius (order of one quarter-cell at 4 km).
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Driver
+# ---------------------------------------------------------------------------
+main.domain_size  = 800000.0 80000.0    # 800 km x 80 km [m]
+main.problem_type = dino                # no internally prescribed geometry;
+                                        # geometry overridden by BISICLES coupling
+main.poutBaseName = pout.suhmo
+
+main.maxTime = 1.0e12                   # large; integration governed by maxStep
+main.maxStep = 4392                     # ~1 yr at dt = 2 h (reaches near-steady state)
+
+# ---------------------------------------------------------------------------
+# Boundary conditions
+# ---------------------------------------------------------------------------
+# Convention: 0 = Dirichlet, 1 = Neumann, 2 = Robin
+#   bc.lo_bc = <x_lo> <y_lo>
+#   bc.hi_bc = <x_hi> <y_hi>
+#
+# x = 0 (ice divide):   no subglacial water flux   -> Neumann  (1)
+# y = 0 (valley wall):  no lateral flux             -> Neumann  (1)
+# x = 800 km (ocean):   free drainage to ocean      -> Dirichlet (0), phi = 0
+# y = 80 km (wall):     no lateral flux             -> Neumann  (1)
+bc.lo_bc = 1 1
+bc.hi_bc = 0 1
+x.hi_dirich_val = 0.0    # hydraulic head = 0 at the ocean margin
+
+# ---------------------------------------------------------------------------
+# Physical parameters
+# ---------------------------------------------------------------------------
+# Ice and water densities must match BISICLES constants.*_density values.
+suhmo.rho_i = 918.0            # ice density            [kg m-3]
+suhmo.rho_w = 1000.0           # fresh water density    [kg m-3]
+suhmo.g     = 9.8              # gravitational accel.   [m s-2]
+
+suhmo.basalFriction  = true
+suhmo.GeoFlux        = 0.05    # geothermal heat flux   [W m-2]
+suhmo.LatHeat        = 3.34e5  # latent heat of fusion  [J kg-1]
+suhmo.WaterViscosity = 1.787e-6 # dynamic viscosity of water at 0 degC [Pa s]
+suhmo.ct  = 7.5e-8             # pressure-melting coeff.  [K Pa-1]
+suhmo.cw  = 4.22e3             # specific heat of water   [J kg-1 K-1]
+suhmo.turbulentParam = 0.001   # Manning-type turbulent friction parameter
+
+# Representative ice thickness for standalone testing (overridden by coupling).
+# A typical grounded-zone value for the MISMIP+ spin-up state is ~900-1200 m.
+suhmo.IceHeight = 1000.0       # [m]
+
+# Sliding velocity used to compute frictional heating at the bed.
+# This initial value (~160 m/yr) is representative for the MISMIP+ grounded
+# interior; it is overridden by the BISICLES velocity field during coupling.
+suhmo.SlidingVelocity = 5.0e-6 0.0    # [m s-1] (x, y components)
+
+# ---------------------------------------------------------------------------
+# Subglacial gap / channel parameters
+# ---------------------------------------------------------------------------
+suhmo.br   = 0.1      # bed roughness parameter (dimensionless)
+suhmo.lr   = 2.0      # bed roughness length scale [m]
+
+# Ice flow law parameter A for creep gap closure.
+# Value 2.5e-25 Pa-3 s-1 corresponds to approximately -10 degC.
+# The basal ice is near the pressure-melting point, but using a colder A
+# gives a more conservative (slower) creep-closure rate, which is a common
+# choice in subglacial hydrology models.
+suhmo.A    = 2.5e-25  # [Pa-3 s-1]
+
+suhmo.cutOffbr  = 0.0
+suhmo.maxOffbr  = 10000.0
+suhmo.diffFactor = 1.0
+
+# Initial conditions for the hydraulic gap and Reynolds number
+suhmo.slope   = 0.0
+suhmo.GapInit = 0.01    # initial sheet gap thickness  [m]
+suhmo.ReInit  = 1000.0  # initial Reynolds number
+
+# ---------------------------------------------------------------------------
+# Distributed (sheet) water input
+# ---------------------------------------------------------------------------
+# Background meltwater input from geothermal heating and basal friction.
+# 5e-10 m/s corresponds to approximately 0.016 m/yr basal melt rate,
+# consistent with the MISMIP+ geothermal flux of 50 mW/m2 and moderate sliding.
+suhmo.distributed_input = 5.0e-10    # volumetric flux per unit bed area [m s-1]
+suhmo.time_varying_input = false
+
+# Seasonal melt / ramp parameters (not active in steady-state coupling mode)
+suhmo.ramp         = false
+suhmo.ramp_up      = 13.0     # ramp-up duration [days]
+suhmo.duration_max = 3.0      # peak melt duration [days]
+suhmo.deltaT       = -6.0     # temperature anomaly for time-varying input [K]
+
+suhmo.relax     = 0.1
+suhmo.floor_min = 0.001       # minimum water film thickness [m]
+suhmo.floor_max = 0.879       # maximum water film thickness [m]
+
+# ---------------------------------------------------------------------------
+# Moulins
+# ---------------------------------------------------------------------------
+# 12 moulins on a 4 x 3 grid in the grounded zone of MISMIP+.
+#
+# Coordinate system matches BISICLES:
+#   x in [0, 800 km], y in [0, 80 km], channel centre at y = 40 km.
+#
+# Column positions (x):  100, 200, 300, 400 km
+#   – All columns are at or upstream of x = 400 km, safely within the
+#     grounded zone for the spin-up state (grounding line ~450 km).
+#
+# Row positions (y): 20, 40, 60 km
+#   – The central row (y = 40 km) is on the channel axis; the outer rows
+#     are 20 km into the fjord flanks where bed elevation is higher but
+#     the ice is still grounded.
+#
+# n_moulins > 0: positions given as interleaved (x1,y1, x2,y2, ...) pairs.
+# Flux: 30 m3/s per moulin (each draining ~100 km x 20 km catchment
+#        at 0.5 m/yr runoff, routed through a single point).
+# Sigma: 1000 m injection radius (concentrated source at 4 km grid spacing).
+suhmo.n_moulins = 12
+suhmo.moulin_position = 100000.0 20000.0 100000.0 40000.0 100000.0 60000.0 200000.0 20000.0 200000.0 40000.0 200000.0 60000.0 300000.0 20000.0 300000.0 40000.0 300000.0 60000.0 400000.0 20000.0 400000.0 40000.0 400000.0 60000.0
+suhmo.moulin_flux  = 30.0 30.0 30.0 30.0 30.0 30.0 30.0 30.0 30.0 30.0 30.0 30.0
+suhmo.moulin_sigma = 1000.0 1000.0 1000.0 1000.0 1000.0 1000.0 1000.0 1000.0 1000.0 1000.0 1000.0 1000.0
+
+# ---------------------------------------------------------------------------
+# Nonlinear solver
+# ---------------------------------------------------------------------------
+solver.use_fas       = true
+solver.use_NL        = true
+solver.bcoeff_otf    = true
+solver.eps_PicardIte = 0.0001
+solver.use_ImplDiff  = true
+
+# ---------------------------------------------------------------------------
+# AMR mesh
+# ---------------------------------------------------------------------------
+# Base grid matches BISICLES: 200 x 20 cells on the 800 km x 80 km domain
+# (4 km base resolution).  One refinement level (AMR level 1, 2 km) is
+# applied near moulins and in regions of high melt rate.
+AmrHydro.num_cells           = 200 20    # 4 km base resolution
+AmrHydro.max_level           = 1         # 4 km -> 2 km near moulins / GL
+AmrHydro.ref_ratios          = 2 2 2 2
+AmrHydro.block_factor        = 4
+AmrHydro.max_box_size        = 40
+AmrHydro.max_base_grid_size  = 40
+AmrHydro.regrid_lbase        = 0         # coarsest level to regrid
+AmrHydro.regrid_interval     = 48        # regrid every 4 days (at dt=2 h)
+AmrHydro.domainLoIndex       = 0 0
+AmrHydro.is_periodic         = 0 0
+AmrHydro.fill_ratio          = 0.5
+AmrHydro.nestingRadius       = 4
+AmrHydro.tags_grow           = 4
+
+# Refine cells where the subglacial melt rate exceeds the threshold
+# (marks active subglacial channel heads and moulin injection zones).
+AmrHydro.n_tag_variables      = 1
+AmrHydro.tag_variables        = meltingRate
+AmrHydro.tagging_mins         = 0
+AmrHydro.tagging_caps         = 1
+AmrHydro.tagging_values_min   = 3.0e-5
+AmrHydro.tagging_values_max   = 1.0e8
+
+# ---------------------------------------------------------------------------
+# Time stepping
+# ---------------------------------------------------------------------------
+# Fixed 2-hour timestep.  The maxStep above gives ~1 yr of simulated time
+# per SUHMO call, which is typically sufficient to reach a near-steady
+# subglacial drainage state for each BISICLES coupling iteration.
+AmrHydro.cfl                = 0.5
+AmrHydro.initial_cfl        = 0.5
+AmrHydro.max_dt_grow_factor = 1.1
+AmrHydro.fixed_dt           = 7200     # 2-hour timestep [s]
+AmrHydro.offsetTime         = 0.0
+
+# ---------------------------------------------------------------------------
+# BISICLES coupling
+# ---------------------------------------------------------------------------
+# These are the default coupling file names; run_coupled.py writes per-
+# iteration overrides (coupled_to_bisicles, bisicles_input_file,
+# output_N_file) into a temporary copy of this file.
+suhmo.coupled_to_bisicles = true
+suhmo.bisicles_input_file = bisicles_for_suhmo.2d.hdf5
+suhmo.output_N_file       = suhmo_for_bisicles.2d.hdf5
+suhmo.ice_thickness_name  = thickness
+suhmo.velocity_x_name    = xVel
+suhmo.velocity_y_name    = yVel
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+AmrHydro.plot_interval   = 4392       # every ~1 yr (4392 x 7200 s ≈ 365 days)
+AmrHydro.plot_prefix     = plot.suhmo.
+AmrHydro.write_gradPhi   = false
+
+AmrHydro.check_interval  = 4392       # every ~1 yr
+AmrHydro.check_prefix    = chk.suhmo.
+AmrHydro.check_overwrite = false
+AmrHydro.check_exit      = false
+
+AmrHydro.PrintCustom = true
+AmrHydro.post_proc   = true
+AmrHydro.verbosity   = 5

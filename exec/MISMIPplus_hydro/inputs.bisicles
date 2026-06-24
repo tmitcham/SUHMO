@@ -1,0 +1,200 @@
+main.poutBaseName = pout.bisicles
+
+# ===========================================================================
+# MISMIP+ marine ice-sheet experiment – BISICLES input file
+#
+# Domain: 800 km (along-flow, x) x 80 km (across-flow, y) x 1 km (vertical)
+#   x = 0       : upstream ice divide
+#   x = 800 km  : ocean / calving front (domain edge)
+#   y = 0–80 km : fjord walls; channel centreline at y = 40 km
+#
+# Reference: Asay-Davis et al. (2016), GMD, doi:10.5194/gmd-9-2471-2016
+#
+# Coupling:
+#   This input file is designed to be driven by run_coupled.py, which
+#   alternates between BISICLES (ice dynamics) and SUHMO (subglacial
+#   hydrology), exchanging effective pressure each coupling iteration.
+#   The coupling script appends overrides for:
+#       main.maxStep, amr.restart_file, main.effectivePressure
+#   at the end of a temporary copy of this file.
+#
+# Spin-up (before coupling):
+#   Run BISICLES alone for ~10 000 yr using melt_spinup as the basal melt
+#   function until the grounding-line position converges.  The resulting
+#   checkpoint is then used as the restart for the first coupled iteration.
+# ===========================================================================
+
+# ---------------------------------------------------------------------------
+# Domain
+# ---------------------------------------------------------------------------
+main.domain_size = 800.0e3 80.0e3 1.0e3    # 800 km x 80 km x 1 km [m]
+amr.num_cells    = 200 20 10               # 4 km base resolution
+
+amr.is_periodic  = 0 0 0
+amr.sigma        = 0 0.1 0.2 0.3 0.4 0.5 0.6 0.7 0.8 0.9 1.0
+
+# ---------------------------------------------------------------------------
+# Time stepping  (run_coupled.py overrides main.maxStep each coupling window)
+# ---------------------------------------------------------------------------
+main.maxTime = 10000.0      # yr – target for standalone spin-up
+main.maxStep = 9999999      # overridden by run_coupled.py
+
+amr.temporal_accuracy   = 1
+amr.cfl                 = 0.25
+amr.initial_cfl         = 0.25
+amr.max_dt_grow_factor  = 1.1
+amr.time_step_ticks     = 0
+
+# ---------------------------------------------------------------------------
+# Ice rheology (L1L2 membrane-stress approximation)
+# ---------------------------------------------------------------------------
+main.constitutiveRelation = L1L2
+main.rateFactor           = constRate
+constRate.epsSqr0         = 1.0e-12
+constRate.A               = 2.0e-17    # Pa-3 s-1, equivalent to T = -5 degC (268 K)
+
+temperature.type  = constant
+temperature.value = 268.0              # K (-5 degC – standard MISMIP+ value)
+
+# Physical constants – must match SUHMO input file
+constants.ice_density       = 918.0
+constants.sea_water_density = 1028.0
+
+# ---------------------------------------------------------------------------
+# Geometry and boundary conditions
+# ---------------------------------------------------------------------------
+geometry.problem_type       = Python
+PythonIBC.module            = mismipplus
+PythonIBC.thicknessFunction = thickness_init
+PythonIBC.topographyFunction = topography
+
+# bc_lo/bc_hi:  0 = Dirichlet (calving/no-slip)
+#               1 = Neumann (stress-free, normal derivative = 0)
+PythonIBC.bc_lo = 1 0    # x=0 (ice divide): Neumann; y=0 (wall): slip-wall
+PythonIBC.bc_hi = 0 0    # x=800 km: calving front;  y=80 km: slip-wall
+
+# ---------------------------------------------------------------------------
+# Basal friction (Tsai 2015 pressure-limited sliding law)
+# ---------------------------------------------------------------------------
+geometry.beta_type           = Python
+PythonBasalFriction.module   = mismipplus
+PythonBasalFriction.function = friction
+
+main.basalFrictionRelation = pressureLimitedLaw
+
+BasalFrictionPressureLimitedLaw.model              = Tsai
+BasalFrictionPressureLimitedLaw.coefficient        = 0.5
+BasalFrictionPressureLimitedLaw.basalFrictionRelation = powerLaw
+
+BasalFrictionPowerLaw.m                        = 0.3333
+BasalFrictionPowerLaw.includeEffectivePressure = false
+
+amr.grounding_line_subdivision = 4
+
+# ---------------------------------------------------------------------------
+# Effective pressure
+# ---------------------------------------------------------------------------
+# Default: hydrostatic N (N = rho_ice * g * H).
+# run_coupled.py overrides these to LevelData once SUHMO has produced
+# suhmo_for_bisicles.2d.hdf5 at the end of iteration 0.
+main.effectivePressure              = hydrostatic
+LevelDataEffectivePressure.file     = suhmo_for_bisicles.2d.hdf5
+LevelDataEffectivePressure.variable = effectivePressure
+
+# ---------------------------------------------------------------------------
+# Surface mass balance
+# ---------------------------------------------------------------------------
+surfaceFlux.type       = constantFlux
+surfaceFlux.flux_value = 0.3    # m yr-1 (MISMIP+ standard SMB)
+
+# ---------------------------------------------------------------------------
+# Basal mass balance (floating shelf only)
+# ---------------------------------------------------------------------------
+# Spin-up: use melt_spinup (zero ocean melt, calving-front sink only).
+# Control coupled run: change to melt_control (identical physics).
+# Ocean-forced run:    change to melt_ocean (MISMIP+ melt4 parameterisation).
+basalFlux.type              = maskedFlux
+basalFlux.grounded.type     = zeroFlux
+basalFlux.floating.type     = pythonFlux
+basalFlux.floating.module   = mismipplus
+basalFlux.floating.function = melt_spinup
+
+# ---------------------------------------------------------------------------
+# Calving model
+# ---------------------------------------------------------------------------
+# Remove ice that reaches the domain's downstream edge (x = 800 km).
+# The calving front is additionally pinned at x = 640 km by the large melt
+# prescribed in mismipplus.py::_cfsource().
+CalvingModel.type     = DomainEdgeCalvingModel
+CalvingModel.front_lo = 0 0    # no calving at x=0 or y=0
+CalvingModel.front_hi = 1 0    # calve at x=800 km; no calving at y=80 km
+
+# ---------------------------------------------------------------------------
+# AMR mesh
+# ---------------------------------------------------------------------------
+amr.maxLevel        = 2                        # 4 km -> 2 km -> 1 km
+amr.ref_ratio       = 2 2 2 2 2 2 2 2 2 2 2
+amr.regrid_interval = 4
+amr.blockFactor     = 4
+amr.fill_ratio      = 0.85
+amr.nestingRadius   = 4
+amr.tags_grow       = 4
+amr.tagCap          = 2
+amr.interpolate_zb  = 0
+amr.max_box_size    = 40
+amr.eliminate_remote_ice = true
+
+# Refine near the grounding line and regions of high velocity gradient
+amr.tag_grounding_line                 = 1
+amr.grounding_line_tagging_min_vel     = 0
+amr.tag_on_grounded_laplacian_velocity = 1
+amr.lap_vel_tagging_val                = 8.0
+
+# ---------------------------------------------------------------------------
+# Velocity solver (JFNK)
+# ---------------------------------------------------------------------------
+amr.velocity_solver_type             = 1    # 1 = JFNK
+amr.do_initial_velocity_guess        = 1
+amr.do_initial_velocity_solve        = 1
+amr.initial_velocity_guess_type      = 1    # linear PDE initial guess
+amr.initial_velocity_guess_const_mu  = 1.0e6
+amr.initial_velocity_guess_solver_type = 1
+amr.initial_velocity_guess_const_vel = 1.0 0.0
+
+JFNKSolver.vtopSafety          = 0.95
+JFNKSolver.minPicardIterations = 2
+JFNKSolver.maxIter             = 15
+JFNKSolver.absTol              = 1.0e0
+JFNKSolver.relTol              = 2.0e-3
+JFNKSolver.RelaxRelTol         = 2.0e-4
+JFNKSolver.RelaxHang           = 0.975
+JFNKSolver.maxRelaxIter        = 20
+JFNKSolver.normType            = 0
+JFNKSolver.verbosity           = 5
+JFNKSolver.vtopRelaxTol        = 0.005
+JFNKSolver.vtopRelaxMinIter    = 8
+JFNKSolver.numMGSmooth         = 8
+JFNKSolver.numMGIter           = 1
+JFNKSolver.h                   = 0.025
+JFNKSolver.switchRate          = 1.8
+
+amr.velocity_solve_interval = 1
+
+# ---------------------------------------------------------------------------
+# Output
+# ---------------------------------------------------------------------------
+# SUHMO reads ice thickness and velocity from BISICLES plot files.
+# The plot interval must be short enough that SUHMO sees geometry updates
+# within each coupling window (run_coupled.py symlinks the latest plot file).
+amr.plot_prefix    = plot.bisicles.
+amr.plot_interval  = 5              # write a plot file every 5 BISICLES steps
+amr.plot_time_interval = 0.0
+amr.write_solver_rhs        = 1
+amr.write_viscous_tensor    = true
+amr.write_thickness_sources = true
+
+amr.check_prefix   = chk.bisicles.
+amr.check_interval = 1000           # overridden by run_coupled.py
+amr.check_overwrite = false
+
+amr.verbosity = 5

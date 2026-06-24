@@ -5524,8 +5524,9 @@ AmrHydro::writePlotFile()
     // compute plot data
     Vector<LevelData<FArrayBox>*> plotData(m_head.size(), NULL);
 
-    // ghost vect makes things simpler
-    IntVect ghostVect(IntVect::Unit);
+    // No ghost cells: ghost cells are never filled (exchange is commented out)
+    // and writing them causes VisIt to mark every cell as a ghost zone.
+    IntVect ghostVect(IntVect::Zero);
 
     for (int lev = 0; lev < numLevels; lev++) {
         // first allocate storage

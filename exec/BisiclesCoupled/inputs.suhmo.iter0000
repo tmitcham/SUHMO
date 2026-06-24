@@ -114,3 +114,10 @@ suhmo.output_N_file       = suhmo_for_bisicles.2d.hdf5
 suhmo.ice_thickness_name  = thickness
 suhmo.velocity_x_name     = xVel
 suhmo.velocity_y_name     = yVel
+# --- coupling iteration 0 overrides ---
+suhmo.coupled_to_bisicles = true
+suhmo.bisicles_input_file = bisicles_for_suhmo.2d.hdf5
+suhmo.output_N_file = suhmo_for_bisicles.2d.hdf5
+main.poutBaseName = pout.suhmo.iter0000
+AmrHydro.plot_prefix = plot.suhmo.iter0000.
+AmrHydro.check_prefix = chk.suhmo.iter0000.
